@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cline SDK x Gemini — Web Coding Agent</title>
+<style>
+  :root{--bg:#0d1117;--panel:#161b22;--panel2:#1c2128;--border:#30363d;
+        --text:#e6edf3;--muted:#8b949e;--accent:#d97706;--accent2:#f59e0b;
+        --green:#3fb950;--red:#f85149;--blue:#58a6ff;}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+       background:var(--bg);color:var(--text)}
+  header{padding:14px 22px;border-bottom:1px solid var(--border);display:flex;
+         align-items:center;gap:12px;background:var(--panel)}
+  header .logo{width:30px;height:30px;border-radius:8px;background:linear-gradient(135deg,var(--accent2),var(--accent));
+               display:flex;align-items:center;justify-content:center;font-weight:800;color:#111}
+  header h1{font-size:17px;margin:0;font-weight:600}
+  header .sub{color:var(--muted);font-size:12px}
+  .wrap{display:grid;grid-template-columns:1fr 340px;gap:16px;padding:18px;max-width:1400px;margin:0 auto}
+  @media(max-width:900px){.wrap{grid-template-columns:1fr}}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:16px}
+  .card h2{margin:0 0 12px;font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+  textarea{width:100%;min-height:100px;background:var(--panel2);color:var(--text);border:1px solid var(--border);
+           border-radius:8px;padding:12px;font-size:14px;resize:vertical;font-family:inherit}
+  textarea:focus{outline:none;border-color:var(--accent2)}
+  .row{display:flex;gap:10px;align-items:center;margin-top:12px;flex-wrap:wrap}
+  select,button{border-radius:8px;padding:8px 13px;font-size:13px;border:1px solid var(--border);
+                background:var(--panel2);color:var(--text)}
+  button.run{background:linear-gradient(135deg,var(--accent),var(--accent2));color:#111;font-weight:700;border:none;cursor:pointer}
+  button.run:disabled{opacity:.55;cursor:not-allowed}
+  button.std{cursor:pointer}button.std:hover{border-color:var(--accent2)}
+  .status{color:var(--muted);font-size:12px}
+  #log{margin-top:14px;background:#0b0e13;border:1px solid var(--border);border-radius:8px;height:430px;
+       overflow:auto;padding:12px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;line-height:1.6}
+  .l{white-space:pre-wrap;word-break:break-word;margin:1px 0}
+  .l.cmd{color:var(--blue);font-weight:600}
+  .l.tool{color:var(--accent2)}
+  .l.ok{color:var(--green)}
+  .l.err{color:var(--red)}
+  .l.sum{color:#d2a8ff}
+  .l.dim{color:#555}
+  .tree{font-family:ui-monospace,Menlo,monospace;font-size:12px;max-height:220px;overflow:auto}
+  .tree div{padding:1px 0}
+  .tree .dir{color:var(--accent2)}.tree .fi{color:var(--muted)}
+  .tag{display:inline-block;background:var(--panel2);border:1px solid var(--border);border-radius:20px;
+       padding:2px 10px;font-size:11px;color:var(--muted);margin:2px}
+  code{background:var(--panel2);padding:1px 5px;border-radius:4px}
+  #summary{white-space:pre-wrap;max-height:190px;overflow:auto}
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">Cl</div>
+  <h1>Cline SDK · Gemini Web Agent</h1>
+  <div class="sub">— real Cline SDK Agent (createTool + Agent) driving Gemini to build code</div>
+</header>
+
+<div class="wrap">
+  <div class="card">
+    <h2>Prompt the agent</h2>
+    <textarea id="task" placeholder="e.g.  Add a REST endpoint to this project that returns health status, and update the README."></textarea>
+    <div class="row">
+      <input id="model" list="models" value="__DEFAULT_MODEL__" style="background:var(--panel2);border:1px solid var(--border);border-radius:8px;color:var(--text);padding:8px 10px;font-size:13px">
+      <datalist id="models">
+        <option>gemini-3.6-flash</option><option>gemini-2.5-flash</option>
+        <option>gemini-2.5-pro</option><option>gemini-3.6-pro</option>
+      </datalist>
+      <button id="run" class="run">▶ Run Agent</button>
+      <button id="clear" class="std">Clear log</button>
+      <span id="status" class="status"></span>
+    </div>
+    <div class="row" style="border-top:1px solid var(--border);padding-top:12px;margin-top:12px">
+      <span class="tag" style="background:transparent;border-color:var(--accent2);color:var(--accent2)">Project zip</span>
+      <input type="file" id="zipfile" accept=".zip" style="font-size:12px;color:var(--muted)">
+      <input id="folderName" placeholder="folder name" style="width:130px;background:var(--panel2);border:1px solid var(--border);border-radius:8px;color:var(--text);padding:8px 10px;font-size:12px">
+      <button id="upload" class="std">⬆ Upload zip</button>
+      <button id="download" class="std" disabled>⬇ Download zip</button>
+      <span id="uploadStatus" class="status"></span>
+    </div>
+    <div id="log"><div class="l dim">Ready. Upload a project zip (optional), enter a prompt and press Run Agent.</div></div>
+  </div>
+
+  <div style="display:flex;flex-direction:column;gap:16px">
+    <div class="card"><h2>Workspace files</h2><div id="tree" class="tree"><div class="l dim">(empty)</div></div></div>
+    <div class="card"><h2>Final summary</h2><div id="summary" class="l">—</div></div>
+    <div class="card"><h2>Engine</h2>
+      <span class="tag">Cline SDK</span><span class="tag">createTool</span>
+      <span class="tag">read_file</span><span class="tag">write_file</span>
+      <span class="tag">patch_file</span><span class="tag">execute_command</span><span class="tag">list_files</span>
+      <span class="tag">Gemini</span>
+      <p style="color:var(--muted);font-size:12px;margin-top:8px">
+        The agent builds code in a sandbox. Change it with <code>AGENT_WORKSPACE</code>.
+      </p>
+    </div>
+  </div>
+<script>
+  const $ = id => document.getElementById(id);
+  const logEl=$('log'), taskEl=$('task'), statusEl=$('status'), runBtn=$('run');
+  let projectFolder = "";   // set after a successful zip upload
+
+  const now=()=>{const d=new Date();return d.toTimeString().slice(0,8);};
+  function addLine(cls,text){const div=document.createElement('div');div.className='l '+cls;
+    div.textContent='['+now()+'] '+text;logEl.appendChild(div);logEl.scrollTop=logEl.scrollHeight;}
+  function cap(s){return String(s).length>3000?String(s).slice(0,3000)+' …':String(s);}
+  function q(s){try{return JSON.stringify(s);}catch(_){return String(s);}}
+
+  $('clear').onclick=()=>{logEl.innerHTML='';$('summary').textContent='—';};
+
+  // ---- project zip upload / download ----
+  $('upload').onclick = async () => {
+    const f = $('zipfile').files[0];
+    const usEl = $('uploadStatus');
+    if (!f) { usEl.textContent = 'choose a .zip first'; return; }
+    const name = ($('folderName').value || f.name.replace(/\.zip$/i, ''))
+      .trim().replace(/[^\w.-]/g, '-').slice(0, 63);
+    usEl.textContent = 'Uploading…';
+    try {
+      const buf = await f.arrayBuffer();
+      const r = await fetch('/api/upload?name=' + encodeURIComponent(name), {
+        method: 'POST', headers: { 'Content-Type': 'application/zip' }, body: buf });
+      const d = await r.json();
+      if (!r.ok) {
+        usEl.textContent = 'Error: ' + (d.error || r.status);
+        addLine('err', 'Upload failed: ' + (d.error || r.status));
+        return;
+      }
+      projectFolder = d.folder;
+      usEl.textContent = 'Uploaded ' + d.files + ' files → ' + d.folder;
+      $('download').disabled = false;
+      addLine('ok', 'Uploaded project zip → workspace/' + d.folder + ' (' + d.files + ' files)');
+      fetchTree();
+    } catch (e) { usEl.textContent = 'Upload failed: ' + e.message; }
+  };
+
+  $('download').onclick = () => {
+    if (!projectFolder) { $('uploadStatus').textContent = 'nothing to download yet'; return; }
+    window.location.href = '/api/download?folder=' + encodeURIComponent(projectFolder);
+  };
+
+  function renderTree(entries){const t=$('tree');
+    if(!entries||entries.length===0){t.innerHTML='<div class="l dim">(empty)</div>';return;}
+    t.innerHTML=entries.map(e=>'<div class="'+(e.type==='dir'?'dir':'fi')+'">'+e.path+
+      (e.size?' <span style="color:#484f58">'+e.size+'B</span>':'')+'</div>').join('');}
+  function fetchTree(){fetch('/api/files').then(r=>r.json()).then(d=>renderTree(d.entries||[])).catch(()=>{});}
+  setInterval(fetchTree,4000);
+  fetchTree();
+
+  function handleEvent(ev){
+    switch(ev.t){
+      case 'status': addLine('dim',ev.msg);break;
+      case 'text': addLine('sum',ev.text?ev.text.replace(/\s+$/,''):'');break;
+      case 'tool_call': addLine('tool','CALL '+ev.name+'('+cap(q(ev.input||{}))+')');break;
+      case 'tool_result':
+        let out=ev.output;
+        if(typeof out!=='string'){out=q(out||{});}
+        if(Array.isArray(ev.output)){
+          out=ev.output.map(p=>(p && p.text)||'').join('');
+        }
+        const s=String(out);
+        addLine('ok','→ '+cap(s.slice(0,800)));
+        break;
+      case 'usage':
+        statusEl.textContent='Tokens: '+(ev.usage&&ev.usage.totalInputTokens||0)+' in / '+
+          (ev.usage&&ev.usage.totalOutputTokens||0)+' out';
+        break;
+      case 'done':
+        $('summary').textContent=ev.outputText||'';
+        addLine('sum','\n'+String(ev.outputText||''));
+        statusEl.textContent='Done in '+ev.iterations+' iterations (status: '+ev.status+').';
+        runBtn.disabled=false;fetchTree();break;
+      case 'error':
+        addLine('err','ERROR: '+String(ev.message||'unknown'));statusEl.textContent='Error';runBtn.disabled=false;break;
+      case 'final':
+        statusEl.textContent='Stream closed.';runBtn.disabled=false;fetchTree();break;
+      case 'stream_end':
+        runBtn.disabled=false;fetchTree();break;
+    }
+  }
+
+  runBtn.onclick=()=>{
+    const task=taskEl.value.trim();
+    if(!task){statusEl.textContent='Please enter a prompt.';return;}
+    runBtn.disabled=true;statusEl.textContent='Running…';logEl.innerHTML='';$('summary').textContent='—';
+    addLine('cmd','Prompt: '+cap(task));
+    fetch('/api/run',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({task,model:$('model').value||'__DEFAULT_MODEL__',folder:projectFolder})})
+      .then(r=>{if(!r.ok)throw new Error('HTTP '+r.status);return r.body.getReader();})
+      .then(reader=>{const dec=new TextDecoder();
+        const pump=({done,value})=>{
+          if(done){runBtn.disabled=false;fetchTree();return;}
+          dec.decode(value,{stream:true}).split('\n').forEach(line=>{
+            if(line.startsWith('data:')){const body=line.slice(5).trim();
+              if(body){try{handleEvent(JSON.parse(body));}catch(_){}}}
+          });
+          return reader.read().then(pump);};
+        return reader.read().then(pump);})
+      .catch(err=>{addLine('err','Fetch error: '+err.message);statusEl.textContent='Error';runBtn.disabled=false;});
+  };
+</script>
+</body>
+</html>
+</div>

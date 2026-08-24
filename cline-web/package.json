@@ -1,0 +1,13 @@
+{
+  "name": "cline-gemini-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node test-agent.mjs"
+  },
+  "dependencies": {
+    "@cline/sdk": "^0.0.77"
+  }
+}
