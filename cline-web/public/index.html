@@ -185,7 +185,18 @@
     addLine('cmd','Prompt: '+cap(task));
     fetch('/api/run',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({task,model:$('model').value||'__DEFAULT_MODEL__',folder:projectFolder})})
-      .then(r=>{if(!r.ok)throw new Error('HTTP '+r.status);return r.body.getReader();})
+      .then(async r=>{
+        if(!r.ok){
+          // Read the server's error payload so we show the real reason
+          // (e.g. "GEMINI_API_KEY not set", "prompt is empty", …) not just "HTTP 400".
+          let msg='HTTP '+r.status;
+          try{const d=await r.json(); if(d&&d.error)msg=String(d.error);}catch(_){}
+          const e=new Error(msg);
+          e.httpStatus=r.status;
+          throw e;
+        }
+        return r.body.getReader();
+      })
       .then(reader=>{const dec=new TextDecoder();
         const pump=({done,value})=>{
           if(done){runBtn.disabled=false;fetchTree();return;}
@@ -195,7 +206,11 @@
           });
           return reader.read().then(pump);};
         return reader.read().then(pump);})
-      .catch(err=>{addLine('err','Fetch error: '+err.message);statusEl.textContent='Error';runBtn.disabled=false;});
+      .catch(err=>{
+        addLine('err','Fetch error: '+(err.message||err));
+        // Show where the error was thrown (stack trace) for debugging.
+        addLine('err','Stack: '+(err.stack||'(no stack)'));
+        statusEl.textContent='Error';runBtn.disabled=false;});
   };
 </script>
 </body>

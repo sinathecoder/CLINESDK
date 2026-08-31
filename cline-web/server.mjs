@@ -49,7 +49,7 @@ function countFiles(dir) {
       else n++;
     }
   };
-  try { walk(dir); } catch {}
+  try { walk(dir); } catch (err) { throw err; }
   return n;
 }
 
@@ -72,6 +72,9 @@ async function runAgent({ task, model, apiKey, send, workspaceDir }) {
   });
 
   let lastAssistantText = "";
+  // Set when the agent emits an error event; thrown after send() so the
+  // try/catch below re-throws and the run is marked failed.
+  let runError = null;
   const unsubscribe = cline.subscribe((event) => {
     if (event.type !== "agent_event") return;
     const ev = event.payload.event;
@@ -92,7 +95,10 @@ async function runAgent({ task, model, apiKey, send, workspaceDir }) {
         break;
       case "content_end":
         if (ev.contentType === "tool" && ev.toolName) {
-          if (ev.error) send({ t: "tool_result", name: ev.toolName, error: ev.error });
+          if (ev.error) {
+            logger.error("tool error", { tool: ev.toolName, error: ev.error?.message || String(ev.error), stack: ev.error?.stack });
+            send({ t: "tool_result", name: ev.toolName, error: ev.error });
+          }
           else send({ t: "tool_result", name: ev.toolName, output: ev.output });
         }
         break;
@@ -103,7 +109,10 @@ async function runAgent({ task, model, apiKey, send, workspaceDir }) {
         send({ t: "usage", usage: ev });
         break;
       case "error":
-        send({ t: "error", message: ev.error?.message || String(ev.error) });
+        const agentErr = ev.error?.message ? ev.error : new Error(String(ev.error));
+        logger.error("agent error", { error: agentErr.message, stack: agentErr.stack || "" });
+        runError = agentErr;
+        send({ t: "error", message: agentErr.message });
         break;
     }
   });
@@ -141,6 +150,10 @@ async function runAgent({ task, model, apiKey, send, workspaceDir }) {
 
     await cline.send({ sessionId, prompt: task, mode: "act" });
 
+    // If the agent emitted an error event, surface it as a thrown exception so
+    // the catch below logs it, re-throws, and the run is marked failed.
+    if (runError) throw runError;
+
     // Pull the final transcript for a reliable summary text.
     try {
       const msgs = await cline.readDisplayMessages(sessionId);
@@ -153,30 +166,28 @@ async function runAgent({ task, model, apiKey, send, workspaceDir }) {
         );
       const tail = assistant.filter(Boolean).slice(-3).join("\n\n").trim();
       if (tail) lastAssistantText = tail;
-    } catch { /* transcript read is best-effort */ }
+    } catch (err) {
+      logger.error("transcript read failed", { error: err?.message || String(err), stack: err?.stack || "" });
+      throw err;
+    }
 
     send({ t: "done", status: "completed", outputText: lastAssistantText });
     send({ t: "final", status: "completed" });
   } catch (err) {
+    logger.error("agent run error", { error: err?.message || String(err), stack: err?.stack || "" });
     send({ t: "error", message: String(err.message || err) });
     send({ t: "final", status: "failed" });
+    throw err; // propagate so the caller marks the stream as failed
   } finally {
     unsubscribe?.();
-    if (sessionId) await cline.stop(sessionId).catch(() => undefined);
-    await cline.dispose().catch(() => undefined);
+    if (sessionId) await cline.stop(sessionId).catch((cleanupErr) => { throw cleanupErr; });
+    await cline.dispose().catch((cleanupErr) => { throw cleanupErr; });
   }
 }
 
 const server = http.Server(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const route = url.pathname;
-
-  // Log every request so we can trace traffic through the app.
-  const query = url.searchParams.toString();
-  logger.http(
-    `${req.method} ${route}${query ? `?${query}` : ""}`,
-    { ip: req.headers["x-forwarded-for"] || req.socket?.remoteAddress || "" },
-  );
 
   if (req.method === "GET" && (route === "/" )) {
     let html = fs.readFileSync(path.join(PUBLIC_DIR, "index.html"), "utf8");
@@ -274,10 +285,13 @@ const server = http.Server(async (req, res) => {
   if (req.method === "POST" && route === "/api/run") {
     const rawBuf = await readBody(req);
     let body = {};
-    try { body = JSON.parse(rawBuf.toString("utf8") || "{}"); } catch (err) {
+    try {
+      body = JSON.parse(rawBuf.toString("utf8") || "{}");
+    } catch (err) {
+      logger.error("json parse error", { error: err?.message || String(err), stack: err?.stack || "" });
       res.writeHead(400, { "content-type": "application/json" });
-      res.end(JSON.stringify({ error: "invalid JSON body" }));
-      return;
+      res.end(JSON.stringify({ error: `invalid JSON body: ${String(err?.message || err)}` }));
+      throw err;
     }
     const taskInput = (body.task || "").trim();
     const model = body.model || DEFAULT_MODEL;
@@ -341,9 +355,10 @@ const server = http.Server(async (req, res) => {
       send({ t: "stream_end", ok: true });
       logger.info("agent run completed", { workspaceDir, model });
     } catch (err) {
-      logger.error("agent run failed", { workspaceDir, error: String(err?.message || err) });
+      logger.error("agent run failed", { workspaceDir, error: err?.message || String(err), stack: err?.stack || "" });
       send({ t: "error", message: String(err.message || err) });
       send({ t: "stream_end", ok: false });
+      throw err; // re-throw so the error is not silently swallowed
     } finally {
       resetWorkspaceRoot();  // never leak the project scope into other requests
       res.end();

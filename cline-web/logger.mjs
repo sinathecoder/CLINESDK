@@ -7,8 +7,7 @@
  *
  * Configuration (all optional environment variables):
  *   LOG_DIR      - directory for file logs   (default: ./logs inside this repo)
- *   LOG_LEVEL    - min level: error|warn|info|http|verbose|debug|silly (default: http,
- *                  so HTTP request logs are shown by default; use info for a quieter run)
+ *   LOG_LEVEL    - min level: error|warn|info|http|verbose|debug|silly (default: verbose)
  *   LOG_CONSOLE  - set to "0" to disable the console transport
  *   LOG_FILE     - set to "0" to disable the file transport
  */
@@ -21,7 +20,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // ---- Resolve settings from the environment ---------------------------------
 const LOG_DIR = path.resolve(process.env.LOG_DIR || path.join(__dirname, "logs"));
-const LOG_LEVEL = process.env.LOG_LEVEL || "http";
+const LOG_LEVEL = process.env.LOG_LEVEL || "verbose";
 const ENABLE_CONSOLE = process.env.LOG_CONSOLE !== "0";
 const ENABLE_FILE = process.env.LOG_FILE !== "0";
 
@@ -38,11 +37,14 @@ const jsonFormat = winston.format.combine(
 const consoleFormat = winston.format.combine(
   winston.format.colorize(),
   winston.format.timestamp({ format: "YYYY-MM-DD HH:mm:ss" }),
-  winston.format.printf(({ level, message, timestamp, ...meta }) => {
+  winston.format.errors({ stack: true }),
+  winston.format.printf(({ level, message, timestamp, stack, ...meta }) => {
     const rest = Object.keys(meta).length
       ? ` ${JSON.stringify(meta)}`
       : "";
-    return `${timestamp} ${level}: ${message}${rest}`;
+    let out = `${timestamp} ${level}: ${message}${rest}`;
+    if (stack) out += `\n${stack}`;
+    return out;
   }),
 );
 
