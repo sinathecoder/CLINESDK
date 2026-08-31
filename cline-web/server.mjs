@@ -20,6 +20,7 @@ import { ClineCore } from "@cline/sdk";
 import {
   tools, workspaceRoot, fileTree, setWorkspaceRoot, resetWorkspaceRoot,
 } from "./tools.js";
+import logger, { logDirectory } from "./logger.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, "public");
@@ -169,6 +170,13 @@ async function runAgent({ task, model, apiKey, send, workspaceDir }) {
 const server = http.Server(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const route = url.pathname;
+
+  // Log every request so we can trace traffic through the app.
+  const query = url.searchParams.toString();
+  logger.http(
+    `${req.method} ${route}${query ? `?${query}` : ""}`,
+    { ip: req.headers["x-forwarded-for"] || req.socket?.remoteAddress || "" },
+  );
 
   if (req.method === "GET" && (route === "/" )) {
     let html = fs.readFileSync(path.join(PUBLIC_DIR, "index.html"), "utf8");
@@ -331,7 +339,9 @@ const server = http.Server(async (req, res) => {
     try {
       await runAgent({ task, model, apiKey, send, workspaceDir });
       send({ t: "stream_end", ok: true });
+      logger.info("agent run completed", { workspaceDir, model });
     } catch (err) {
+      logger.error("agent run failed", { workspaceDir, error: String(err?.message || err) });
       send({ t: "error", message: String(err.message || err) });
       send({ t: "stream_end", ok: false });
     } finally {
@@ -347,9 +357,17 @@ const server = http.Server(async (req, res) => {
 
 const HOST = process.env.HOST || "127.0.0.1";
 const PORT = Number(process.env.PORT || 5001);
+server.on("error", (err) => {
+  logger.error("server error", { error: String(err?.message || err) });
+});
+server.on("clientError", (err, socket) => {
+  logger.warn("client error", { error: String(err?.message || err) });
+  socket?.destroy();
+});
 server.listen(PORT, HOST, () => {
-  console.log(` * Cline SDK web agent -> http://${HOST}:${PORT}`);
-  console.log(` * Workspace -> ${workspaceRoot()}`);
+  logger.info(`Cline SDK web agent -> http://${HOST}:${PORT}`);
+  logger.info(`Workspace -> ${workspaceRoot()}`);
+  logger.info(`Log file  -> ${logDirectory()}`);
 });
 
 function readBody(req) {
