@@ -1,2 +1,10 @@
 # Winston log files
 logs/
+
+# Local secrets/config
+.env
+
+# SDK state kept inside the project (providers.json, sessions, db, logs)
+.cline-local/
+
+node_modules/

@@ -21,12 +21,18 @@ import {
   tools, workspaceRoot, fileTree, setWorkspaceRoot, resetWorkspaceRoot,
 } from "./tools.js";
 import logger, { logDirectory } from "./logger.mjs";
+import {
+  ensureVertexSettings, describeStore, VERTEX_PROJECT, VERTEX_REGION, VERTEX_MODEL,
+} from "./provider-config.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, "public");
 
 const API_KEY = process.env.GEMINI_API_KEY || "";
-const DEFAULT_MODEL = process.env.GEMINI_MODEL || "gemini-3.6-flash";
+
+// Vertex target comes from provider-config.mjs (defaults: [project_ID] /
+// us-central1 / gemini-2.5-flash, overridable via VERTEX_* in .env).
+const DEFAULT_MODEL = VERTEX_MODEL;
 
 function sse(event) {
   return `data: ${JSON.stringify(event)}\n\n`;
@@ -123,10 +129,14 @@ async function runAgent({ task, model, apiKey, send, workspaceDir }) {
       source: "web",
       interactive: false,
       config: {
-        providerId: "gemini",
-        modelId: model,
-        apiKey,
-        cwd: workspaceDir,
+        providerId: "vertex",
+        modelId: DEFAULT_MODEL,
+        // Vertex project/region. IMPORTANT: the SDK's Vertex transport reads
+        // these from the provider settings store
+        // (~/.cline/data/settings/providers.json -> providers.vertex.gcp), NOT
+        // from this config object -- config.gcp is dropped by the resolver.
+        // `node test-vertex.mjs` writes and verifies that entry.
+
         workspaceRoot: workspaceDir,
         mode: "act",                    // ← native Cline act mode
         maxIterations: 60,
@@ -326,11 +336,6 @@ const server = http.Server(async (req, res) => {
       res.end(JSON.stringify({ error: "prompt is empty" }));
       return;
     }
-    if (!apiKey) {
-      res.writeHead(400, { "content-type": "application/json" });
-      res.end(JSON.stringify({ error: "GEMINI_API_KEY not set" }));
-      return;
-    }
 
     res.writeHead(200, {
       "content-type": "text/event-stream",
@@ -379,6 +384,21 @@ server.on("clientError", (err, socket) => {
   logger.warn("client error", { error: String(err?.message || err) });
   socket?.destroy();
 });
+// Make sure the SDK's provider settings store contains the `vertex` entry its
+// transport needs. Without it the SDK builds a project-less request and sends
+// an x-goog-api-key, which Vertex rejects with a confusing HTTP 401
+// ("API keys are not supported by this API").
+try {
+  const store = ensureVertexSettings();
+  logger.info(
+    `Provider config -> ${describeStore(store.file)}${store.wrote ? " (written)" : ""}`,
+  );
+} catch (err) {
+  logger.warn("could not ensure vertex provider settings", {
+    error: String(err?.message || err),
+  });
+}
+
 server.listen(PORT, HOST, () => {
   logger.info(`Cline SDK web agent -> http://${HOST}:${PORT}`);
   logger.info(`Workspace -> ${workspaceRoot()}`);
